@@ -1,10 +1,3 @@
-# Example Post-Deployment Configuration Script
-# This script runs inside the VM after deployment.
-
-param(
-    [string]$Environment,
-    [string]$Timestamp
-)
 
 set-german-language
 
@@ -59,3 +52,4 @@ function set-german-language {
         exit 1
     }
 }
+
