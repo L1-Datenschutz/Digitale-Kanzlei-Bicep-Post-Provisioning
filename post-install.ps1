@@ -2,7 +2,8 @@
 # This script runs inside the VM after deployment.
 
 param(
-    [string]$Environment
+    [string]$Environment,
+    [string]$Timestamp
 )
 
 Start-Transcript -Path "C:\Windows\Temp\post-install.log"
