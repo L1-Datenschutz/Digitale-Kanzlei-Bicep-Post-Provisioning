@@ -1,8 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$RegistrationToken
-    [string]$Environment
-    [string]$EnableFslogix
+    [string]$RegistrationToken,
+    [string]$Environment,
+    [string]$EnableFslogix,
     [string]$FslogixSharePath
 )
 
