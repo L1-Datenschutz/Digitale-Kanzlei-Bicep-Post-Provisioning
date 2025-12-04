@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory = $true)]
     [string]$RegistrationToken,
     [string]$Environment,
     [string]$EnableFslogix,
@@ -12,79 +12,72 @@ function Install-AvdAgent {
     param($Token)
     Write-Host "Agent not found. Proceeding with FRESH installation..." -ForegroundColor Yellow
     
-    # Create data directory
     New-Item -Path "C:\AzureData" -ItemType Directory -Force | Out-Null
-
-    # --- 1. Install AVD Agent ---
-    Write-Host "Downloading AVD Agent..."
+    
+    # Download
     $AgentUrl = "https://query.prod.cms.rt.microsoft.com/cms/api/am/binary/RWrmXv"
-    $AgentMsi = "C:\AzureData\AVDAgent.msi"
-    Invoke-WebRequest -Uri $AgentUrl -OutFile $AgentMsi
-
-    Write-Host "Installing AVD Agent..."
-    # Critical: We pass the token here for a fresh install
-    $procAgent = Start-Process msiexec.exe -ArgumentList "/i `"$AgentMsi`" /quiet /norestart REGISTRATIONTOKEN=$Token" -Wait -PassThru
-    
-    # Exit Code 0 = Success, 3010 = Success (Reboot Required)
-    if ($procAgent.ExitCode -ne 0 -and $procAgent.ExitCode -ne 3010) { 
-        throw "AVD Agent install failed with exit code: $($procAgent.ExitCode)" 
-    }
-
-    # --- 2. Install AVD Bootloader ---
-    Write-Host "Downloading AVD Bootloader..."
     $BootUrl = "https://query.prod.cms.rt.microsoft.com/cms/api/am/binary/RWrxrH"
-    $BootMsi = "C:\AzureData\AVDBootloader.msi"
-    Invoke-WebRequest -Uri $BootUrl -OutFile $BootMsi
+    (New-Object System.Net.WebClient).DownloadFile($AgentUrl, "C:\AzureData\AVDAgent.msi")
+    (New-Object System.Net.WebClient).DownloadFile($BootUrl, "C:\AzureData\AVDBootloader.msi")
 
-    Write-Host "Installing AVD Bootloader..."
-    $procBoot = Start-Process msiexec.exe -ArgumentList "/i `"$BootMsi`" /quiet /norestart" -Wait -PassThru
-    
-    if ($procBoot.ExitCode -ne 0 -and $procBoot.ExitCode -ne 3010) { 
-        throw "AVD Bootloader install failed with exit code: $($procBoot.ExitCode)" 
-    }
+    # Install
+    Write-Host "Installing AVD Agent..."
+    $p1 = Start-Process msiexec.exe -ArgumentList "/i `"C:\AzureData\AVDAgent.msi`" /quiet /norestart REGISTRATIONTOKEN=$Token" -Wait -PassThru
+    if ($p1.ExitCode -ne 0 -and $p1.ExitCode -ne 3010) { throw "Agent install failed: $($p1.ExitCode)" }
+
+    Write-Host "Installing Bootloader..."
+    $p2 = Start-Process msiexec.exe -ArgumentList "/i `"C:\AzureData\AVDBootloader.msi`" /quiet /norestart" -Wait -PassThru
+    if ($p2.ExitCode -ne 0 -and $p2.ExitCode -ne 3010) { throw "Bootloader install failed: $($p2.ExitCode)" }
 }
 
 function Register-ExistingAgent {
     param($Token)
-    Write-Host "AVD Agent found (Pre-installed). Injecting Registration Token..." -ForegroundColor Cyan
+    Write-Host "AVD Agent found. Injecting Token and Restarting..." -ForegroundColor Cyan
 
     $regPath = "HKLM:\SOFTWARE\Microsoft\RDInfraAgent"
     if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
 
-    # Inject Token
+    # 1. Stop Service explicitly to ensure it picks up the new token on start
+    Write-Host "Stopping RDAgentBootLoader..."
+    Stop-Service "RDAgentBootLoader" -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 60
+
+    # 2. Inject Token
     New-ItemProperty -Path $regPath -Name "RegistrationToken" -Value $Token -PropertyType String -Force | Out-Null
     
-    # Restart Service
-    Write-Host "Restarting RDAgentBootLoader to trigger registration..."
-    Restart-Service "RDAgentBootLoader" -Force
+    # 3. Start Service
+    Write-Host "Starting RDAgentBootLoader..."
+    Start-Service "RDAgentBootLoader"
 }
 
 try {
     Write-Host "--- Starting AVD Host Setup ---"
+    
+    # Initial sleep to let OS settle
+    Start-Sleep -Seconds 60
 
-    # Check for Service
-    $bootLoaderService = Get-Service "RDAgentBootLoader" -ErrorAction SilentlyContinue
-
-    if ($bootLoaderService) {
+    if (Get-Service "RDAgentBootLoader" -ErrorAction SilentlyContinue) {
         Register-ExistingAgent -Token $RegistrationToken
-    }
-    else {
+    } else {
         Install-AvdAgent -Token $RegistrationToken
     }
 
-    # --- Verification ---
-    Write-Host "Verifying Registration Status..."
-    # Wait a moment for the agent to process the token
-    Start-Sleep -Seconds 20
+    # --- Verification Loop ---
+    Write-Host "Verifying Registration Status (Timeout: 120s)..."
     
-    $isRegistered = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\RDInfraAgent" -Name "IsRegistered" -ErrorAction SilentlyContinue
-    
-    if ($isRegistered.IsRegistered -eq 1) {
-        Write-Host "SUCCESS: VM is registered to the Host Pool." -ForegroundColor Green
-    } else {
-        Write-Warning "VM is not yet registered (IsRegistered != 1). It may take a minute to appear in the portal."
-        Write-Host "Please check the Host Pool in Azure Portal manually."
+    for ($i = 0; $i -lt 12; $i++) {
+        Start-Sleep -Seconds 60
+        $reg = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\RDInfraAgent" -Name "IsRegistered" -ErrorAction SilentlyContinue
+        
+        if ($reg.IsRegistered -eq 1) {
+            Write-Host "SUCCESS: VM is registered to the Host Pool." -ForegroundColor Green
+            exit 0
+        }
+        Write-Host "Waiting for registration... ($(($i+1)*10)s)"
     }
+
+    # If we get here, it failed. Throw error so deployment fails.
+    throw "TIMEOUT: VM failed to register after 120 seconds. Token might be invalid or service is stuck."
 }
 catch {
     Write-Error "Setup failed: $_"
