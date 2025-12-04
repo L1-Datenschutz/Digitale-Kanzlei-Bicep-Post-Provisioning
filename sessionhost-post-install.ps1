@@ -9,49 +9,43 @@ param(
 $ErrorActionPreference = "Stop"
 
 try {
-    # Create data directory if it doesn't exist
-    New-Item -Path "C:\AzureData" -ItemType Directory -Force | Out-Null
+    Write-Host "--- Starting AVD Agent Registration (Pre-installed) ---"
 
-    # --- 1. Install AVD Agent ---
-    Write-Host "Downloading AVD Agent..."
-    $AgentUrl = "https://query.prod.cms.rt.microsoft.com/cms/api/am/binary/RWrmXv"
-    $AgentMsi = "C:\AzureData\AVDAgent.msi"
-    $AgentLog = "C:\AzureData\AVDAgentInstall.log"
-    Invoke-WebRequest -Uri $AgentUrl -OutFile $AgentMsi
+    # 1. Check for Pre-installed Agent Service
+    $bootLoaderService = Get-Service "RDAgentBootLoader" -ErrorAction SilentlyContinue
 
-    Write-Host "Installing AVD Agent..."
-    # Added /l*v for logging and -PassThru to capture exit code
-    $procAgent = Start-Process msiexec.exe -ArgumentList "/i `"$AgentMsi`" /quiet /norestart /l*v `"$AgentLog`" REGISTRATIONTOKEN=$RegistrationToken" -Wait -PassThru
+    if (-not $bootLoaderService) {
+        throw "AVD Agent service 'RDAgentBootLoader' not found. Ensure you are using an AVD Marketplace Image."
+    }
+
+    Write-Host "AVD Agent found. Injecting Registration Token..."
+
+    # 2. Define Registry Path
+    $regPath = "HKLM:\SOFTWARE\Microsoft\RDInfraAgent"
+    if (-not (Test-Path $regPath)) {
+        New-Item -Path $regPath -Force | Out-Null
+    }
+
+    # 3. Inject Token
+    # The agent looks for this specific value to register itself
+    New-ItemProperty -Path $regPath -Name "RegistrationToken" -Value $RegistrationToken -PropertyType String -Force | Out-Null
+    Write-Host "Token injected successfully."
+
+    # 4. Restart Service to trigger registration
+    Write-Host "Restarting RDAgentBootLoader to trigger registration..."
+    Restart-Service "RDAgentBootLoader" -Force
     
-    if ($procAgent.ExitCode -ne 0) {
-        throw "AVD Agent installation failed with exit code $($procAgent.ExitCode). Check log at $AgentLog"
+    # 5. Verification
+    Start-Sleep -Seconds 15
+    $isRegistered = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\RDInfraAgent" -Name "IsRegistered" -ErrorAction SilentlyContinue
+    
+    if ($isRegistered.IsRegistered -eq 1) {
+        Write-Host "SUCCESS: VM is registered to the Host Pool." -ForegroundColor Green
+    } else {
+        Write-Warning "VM is not yet registered (IsRegistered != 1). It may take a minute to appear in the portal."
     }
-
-    # --- 2. Install AVD Bootloader ---
-    Write-Host "Downloading AVD Bootloader..."
-    $BootUrl = "https://query.prod.cms.rt.microsoft.com/cms/api/am/binary/RWrxrH"
-    $BootMsi = "C:\AzureData\AVDBootloader.msi"
-    $BootLog = "C:\AzureData\AVDBootloaderInstall.log"
-    Invoke-WebRequest -Uri $BootUrl -OutFile $BootMsi
-
-    Write-Host "Installing AVD Bootloader..."
-    $procBoot = Start-Process msiexec.exe -ArgumentList "/i `"$BootMsi`" /quiet /norestart /l*v `"$BootLog`"" -Wait -PassThru
-
-    if ($procBoot.ExitCode -ne 0) {
-        throw "AVD Bootloader installation failed with exit code $($procBoot.ExitCode). Check log at $BootLog"
-    }
-
-    # --- 3. Verify Installation ---
-    Write-Host "Verifying services..."
-    $agentService = Get-Service "RemoteDesktopAgent" -ErrorAction SilentlyContinue
-    $bootService = Get-Service "RDAgentBootLoader" -ErrorAction SilentlyContinue
-
-    if (-not $agentService) { throw "Service 'RemoteDesktopAgent' was not found after installation." }
-    if (-not $bootService) { throw "Service 'RDAgentBootLoader' was not found after installation." }
-
-    Write-Host "AVD Agent and Bootloader installed successfully. Services are present."
 }
 catch {
-    Write-Error "Installation failed: $_"
+    Write-Error "Registration failed: $_"
     exit 1
 }
