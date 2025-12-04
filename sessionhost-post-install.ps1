@@ -6,18 +6,52 @@ param(
     [string]$FslogixSharePath
 )
 
+$ErrorActionPreference = "Stop"
+
 try {
+    # Create data directory if it doesn't exist
+    New-Item -Path "C:\AzureData" -ItemType Directory -Force | Out-Null
+
+    # --- 1. Install AVD Agent ---
+    Write-Host "Downloading AVD Agent..."
+    $AgentUrl = "https://query.prod.cms.rt.microsoft.com/cms/api/am/binary/RWrmXv"
+    $AgentMsi = "C:\AzureData\AVDAgent.msi"
+    $AgentLog = "C:\AzureData\AVDAgentInstall.log"
+    Invoke-WebRequest -Uri $AgentUrl -OutFile $AgentMsi
+
     Write-Host "Installing AVD Agent..."
-    Invoke-WebRequest -Uri "https://query.prod.cms.rt.microsoft.com/cms/api/am/binary/RWrmXv" -OutFile "AVDAgent.msi"
-    Start-Process msiexec.exe -ArgumentList "/i AVDAgent.msi /quiet /norestart REGISTRATIONTOKEN=$RegistrationToken" -Wait
+    # Added /l*v for logging and -PassThru to capture exit code
+    $procAgent = Start-Process msiexec.exe -ArgumentList "/i `"$AgentMsi`" /quiet /norestart /l*v `"$AgentLog`" REGISTRATIONTOKEN=$RegistrationToken" -Wait -PassThru
+    
+    if ($procAgent.ExitCode -ne 0) {
+        throw "AVD Agent installation failed with exit code $($procAgent.ExitCode). Check log at $AgentLog"
+    }
+
+    # --- 2. Install AVD Bootloader ---
+    Write-Host "Downloading AVD Bootloader..."
+    $BootUrl = "https://query.prod.cms.rt.microsoft.com/cms/api/am/binary/RWrxrH"
+    $BootMsi = "C:\AzureData\AVDBootloader.msi"
+    $BootLog = "C:\AzureData\AVDBootloaderInstall.log"
+    Invoke-WebRequest -Uri $BootUrl -OutFile $BootMsi
 
     Write-Host "Installing AVD Bootloader..."
-    Invoke-WebRequest -Uri "https://query.prod.cms.rt.microsoft.com/cms/api/am/binary/RWrxrH" -OutFile "AVDBootloader.msi"
-    Start-Process msiexec.exe -ArgumentList "/i AVDBootloader.msi /quiet /norestart" -Wait
+    $procBoot = Start-Process msiexec.exe -ArgumentList "/i `"$BootMsi`" /quiet /norestart /l*v `"$BootLog`"" -Wait -PassThru
 
-    Write-Host "VM successfully joined to Host Pool."
+    if ($procBoot.ExitCode -ne 0) {
+        throw "AVD Bootloader installation failed with exit code $($procBoot.ExitCode). Check log at $BootLog"
+    }
+
+    # --- 3. Verify Installation ---
+    Write-Host "Verifying services..."
+    $agentService = Get-Service "RemoteDesktopAgent" -ErrorAction SilentlyContinue
+    $bootService = Get-Service "RDAgentBootLoader" -ErrorAction SilentlyContinue
+
+    if (-not $agentService) { throw "Service 'RemoteDesktopAgent' was not found after installation." }
+    if (-not $bootService) { throw "Service 'RDAgentBootLoader' was not found after installation." }
+
+    Write-Host "AVD Agent and Bootloader installed successfully. Services are present."
 }
 catch {
-    Write-Error "Failed to join Host Pool: $_"
+    Write-Error "Installation failed: $_"
     exit 1
 }
