@@ -40,7 +40,7 @@ function Register-ExistingAgent {
     # 1. Stop Service explicitly to ensure it picks up the new token on start
     Write-Host "Stopping RDAgentBootLoader..."
     Stop-Service "RDAgentBootLoader" -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 60
+    Start-Sleep -Seconds 120
 
     # 2. Inject Token
     New-ItemProperty -Path $regPath -Name "RegistrationToken" -Value $Token -PropertyType String -Force | Out-Null
@@ -54,7 +54,7 @@ try {
     Write-Host "--- Starting AVD Host Setup ---"
     
     # Initial sleep to let OS settle
-    Start-Sleep -Seconds 60
+    Start-Sleep -Seconds 120
 
     if (Get-Service "RDAgentBootLoader" -ErrorAction SilentlyContinue) {
         Register-ExistingAgent -Token $RegistrationToken
@@ -66,7 +66,7 @@ try {
     Write-Host "Verifying Registration Status (Timeout: 120s)..."
     
     for ($i = 0; $i -lt 12; $i++) {
-        Start-Sleep -Seconds 60
+        Start-Sleep -Seconds 10
         $reg = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\RDInfraAgent" -Name "IsRegistered" -ErrorAction SilentlyContinue
         
         if ($reg.IsRegistered -eq 1) {
@@ -77,7 +77,7 @@ try {
     }
 
     # If we get here, it failed. Throw error so deployment fails.
-    throw "TIMEOUT: VM failed to register after 120 seconds. Token might be invalid or service is stuck."
+    throw "TIMEOUT: VM failed to register after 120 seconds. Token might be invalid or service is stuck. Token value: $RegistrationToken"
 }
 catch {
     Write-Error "Setup failed: $_"
