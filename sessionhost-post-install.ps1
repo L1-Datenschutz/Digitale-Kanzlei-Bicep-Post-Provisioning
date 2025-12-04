@@ -77,7 +77,7 @@ try {
     }
 
     # If we get here, it failed. Throw error so deployment fails.
-    throw "TIMEOUT: VM failed to register after 120 seconds. Token might be invalid or service is stuck. Token value: $RegistrationToken"
+    throw "TIMEOUT: VM failed to register after 120 seconds. Token might be invalid or service is stuck. Token value: ${$RegistrationToken.Substring(0, 10)}..."
 }
 catch {
     Write-Error "Setup failed: $_"
