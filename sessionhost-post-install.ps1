@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory=$true)]
     [string]$RegistrationToken,
     [string]$Environment,
     [string]$EnableFslogix,
