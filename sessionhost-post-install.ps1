@@ -167,9 +167,12 @@ try {
         Write-Error "❌ TIMEOUT: Agent did not register within time limit."
         Write-Error "Registration Timeout. Token might be invalid or Broker unreachable."
     }
-
+    exit 0
 }
 catch {
     Write-Error "CRITICAL ERROR in Post-Install Script: $($_.Exception.Message)"
+    exit 0
     # exit 1 - soft fail logic maintained as requested
 }
+
+exit 0 # just to be sure
