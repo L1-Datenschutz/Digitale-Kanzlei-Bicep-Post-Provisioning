@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 
 function Install-AvdAgent {
     param($Token)
-    Write-Host "Agent not found. Proceeding with FRESH installation..." -ForegroundColor Yellow
+    Write-Host "Agent not found. Proceeding with FRESH installation and Token ($($Token.Substring(0, 10)))..." -ForegroundColor Yellow
     
     New-Item -Path "C:\AzureData" -ItemType Directory -Force | Out-Null
     
@@ -32,7 +32,7 @@ function Install-AvdAgent {
 
 function Register-ExistingAgent {
     param($Token)
-    Write-Host "AVD Agent found. Injecting Token and Restarting..." -ForegroundColor Cyan
+    Write-Host "AVD Agent found. Injecting Token ($($Token.Substring(0, 10))) and Restarting..." -ForegroundColor Cyan
 
     $regPath = "HKLM:\SOFTWARE\Microsoft\RDInfraAgent"
     if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
@@ -77,7 +77,7 @@ try {
     }
 
     # If we get here, it failed. Throw error so deployment fails.
-    throw "TIMEOUT: VM failed to register after 120 seconds. Token might be invalid or service is stuck. Token value: ${$RegistrationToken.Substring(0, 10)}..."
+    throw "TIMEOUT: VM failed to register after 120 seconds. Token might be invalid or service is stuck. Token value: $($RegistrationToken.Substring(0, 10))..."
 }
 catch {
     Write-Error "Setup failed: $_"
