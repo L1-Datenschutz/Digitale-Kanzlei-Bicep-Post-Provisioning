@@ -136,6 +136,9 @@ try {
                 $isRegistered = 1
                 break
             }
+
+            Write-Host "No registration detected yet. Curren Registry value: $($val.isRegistered)"
+            Write-Host $val
         }
         catch {
             # Ignore read errors during loop
