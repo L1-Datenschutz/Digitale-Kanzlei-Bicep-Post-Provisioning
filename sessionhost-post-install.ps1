@@ -106,7 +106,6 @@ try {
     else {
         # Detailliertere Fehlermeldung
         Write-Error "❌ TIMEOUT: Agent did not register. If this is a pre-installed agent, the version might be incompatible with the token or the environment."
-        throw "Timeout waiting for registration."
     }
 
 }
