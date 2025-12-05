@@ -159,11 +159,11 @@ try {
 
         Write-Host "Debug Info: BootLoader is $blStatus, Agent is $agStatus."
         Write-Error "❌ TIMEOUT: Agent did not register within time limit."
-        throw "Registration Timeout. Token might be invalid or Broker unreachable."
+        Write-Error "Registration Timeout. Token might be invalid or Broker unreachable."
     }
 
 }
 catch {
     Write-Error "CRITICAL ERROR in Post-Install Script: $($_.Exception.Message)"
-    exit 1
+    exit 1 
 }
