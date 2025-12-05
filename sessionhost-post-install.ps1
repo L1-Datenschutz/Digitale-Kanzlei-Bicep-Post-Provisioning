@@ -112,5 +112,4 @@ try {
 }
 catch {
     Write-Error "CRITICAL ERROR: $($_.Exception.Message)"
-    exit 1
 }
