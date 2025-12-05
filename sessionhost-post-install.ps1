@@ -145,7 +145,7 @@ try {
         
         # Soft-Fail damit wir das Log sehen können, aber markieren als Fehler
         Write-Error "❌ TIMEOUT: Agent did not register within time limit."
-        exit 1
+        exit 0
     }
 }
 catch {
