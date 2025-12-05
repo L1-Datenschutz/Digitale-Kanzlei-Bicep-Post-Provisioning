@@ -179,8 +179,7 @@ try {
 }
 catch {
     Write-Error "❌ CRITICAL ERROR in Post-Install Script: $($_.Exception.Message)"
-    exit 0
-    # exit 1 - soft fail logic maintained as requested
+    exit 1
 }
 
 exit 0 # just to be sure
