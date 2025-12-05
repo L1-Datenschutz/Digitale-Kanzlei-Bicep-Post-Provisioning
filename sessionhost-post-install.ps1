@@ -124,10 +124,37 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # PHASE 3: VERIFICATION (Extended Wait - 5 Minutes Total)
+    # PHASE 3: SERVICE HEALTH CHECK & INITIALIZATION SOAK
+    # -------------------------------------------------------------------------
+    Write-Host "[INFO] Allowing services to fully initialize (60 seconds)..." -ForegroundColor Cyan
+    Start-Sleep -Seconds 60
+    
+    Write-Host "[INFO] Checking service health before verification..." -ForegroundColor Cyan
+    $serviceCheckRetries = 0
+    $maxServiceRetries = 10  # 10 retries * 3 seconds = 30 seconds
+    
+    while ($serviceCheckRetries -lt $maxServiceRetries) {
+        $blService = Get-Service -Name "RDAgentBootLoader" -ErrorAction SilentlyContinue
+        $agService = Get-Service -Name "RDAgent" -ErrorAction SilentlyContinue
+        
+        if ($blService -and $blService.Status -eq 'Running' -and $agService -and $agService.Status -eq 'Running') {
+            Write-Host "[INFO] Both services are running. Ready for broker negotiation." -ForegroundColor Green
+            break
+        }
+        
+        Write-Host "[INFO] Waiting for services to be ready... Attempt $($serviceCheckRetries + 1)/$maxServiceRetries (BL: $($blService.Status ?? 'N/A'), Agent: $($agService.Status ?? 'N/A'))"
+        Start-Sleep -Seconds 3
+        $serviceCheckRetries++
+    }
+    
+    if ($serviceCheckRetries -eq $maxServiceRetries) {
+        Write-Host "[WARNING] Services not fully healthy after 30 seconds, but continuing verification..." -ForegroundColor Yellow
+    }
+
+    # -------------------------------------------------------------------------
+    # PHASE 4: VERIFICATION (Extended Wait - 5 Minutes Total)
     # -------------------------------------------------------------------------
     Write-Host "[INFO] Waiting for Azure Broker negotiation (this may take 2-5 minutes)..." -ForegroundColor Cyan
-    Start-Sleep -Seconds 30
 
     Write-Host "[INFO] Verifying registration status..." -ForegroundColor Cyan
     $maxRetries = 30  # 30 retries * 10 seconds = 5 minutes
@@ -146,7 +173,7 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # FAILURE LOGGING
+    # FAILURE LOGGING WITH EVENT VIEWER DIAGNOSTICS
     # -------------------------------------------------------------------------
     Write-Host "[ERROR] Registration timeout after 5 minutes." -ForegroundColor Red
     
@@ -160,6 +187,33 @@ try {
         Write-Host "[DEBUG] Token present in registry (First 5 chars: $($regCheck.RegistrationToken.Substring(0,5))...)"
     } else {
         Write-Host "[DEBUG] Token MISSING from registry!"
+    }
+
+    # Collect Event Viewer diagnostics
+    Write-Host "[DEBUG] Collecting RDAgent Event Log entries..." -ForegroundColor Yellow
+    $eventLogs = Get-EventLog -LogName System -Source "RDAgent*" -Newest 20 -ErrorAction SilentlyContinue | 
+        Select-Object -Property TimeGenerated, EntryType, Message
+    
+    if ($eventLogs) {
+        Write-Host "[DEBUG] Recent RDAgent events:"
+        foreach ($event in $eventLogs) {
+            Write-Host "[DEBUG]   $($event.TimeGenerated) [$($event.EntryType)] $($event.Message)"
+        }
+    } else {
+        Write-Host "[DEBUG] No RDAgent events found in System log."
+    }
+    
+    # Check Application log for agent errors
+    $appLogs = Get-EventLog -LogName Application -ErrorAction SilentlyContinue | 
+        Where-Object { $_.Source -like "*RD*" -or $_.Message -like "*RDAgent*" } | 
+        Sort-Object -Property TimeGenerated -Descending | 
+        Select-Object -First 10 -Property TimeGenerated, EntryType, Source, Message
+    
+    if ($appLogs) {
+        Write-Host "[DEBUG] Recent Application log entries related to RDAgent:"
+        foreach ($event in $appLogs) {
+            Write-Host "[DEBUG]   $($event.TimeGenerated) [$($event.EntryType)] $($event.Source): $($event.Message)"
+        }
     }
 
     Write-Error "[CRITICAL ERROR] TIMEOUT: Agent did not register."
