@@ -106,7 +106,7 @@ try {
     Stop-Service -Name "RDAgentBootLoader" -Force -ErrorAction SilentlyContinue
     Stop-Service -Name "RDAgent" -Force -ErrorAction SilentlyContinue
     
-    Start-Sleep -Seconds 5
+    Start-Sleep -Seconds 15
 
     # B. INJECT TOKEN
     Write-Host "Injecting Registration Token into Registry..."
@@ -134,7 +134,7 @@ try {
     if ($bl.Status -ne 'Running') {
         Write-Host "⚠️ BootLoader died immediately! Attempting one retry..." -ForegroundColor Red
         Start-Service -Name "RDAgentBootLoader"
-        Start-Sleep -Seconds 10
+        Start-Sleep -Seconds 15
     }
 
     # Jetzt prüfen wir den Agent
