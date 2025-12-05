@@ -162,5 +162,5 @@ try {
 }
 catch {
     Write-Error "CRITICAL ERROR in Post-Install Script: $($_.Exception.Message)"
-    exit 1
+    exit  # soft-fail
 }
