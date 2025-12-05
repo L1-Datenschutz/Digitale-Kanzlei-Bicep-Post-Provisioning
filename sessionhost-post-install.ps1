@@ -26,8 +26,14 @@ param(
 # Set error preference to Stop to catch all errors immediately
 $ErrorActionPreference = "Stop"
 
-Write-Host "Let OS settle for 30 seconds..."
-Start-Sleep -Seconds 30
+if ($RegistrationToken -and $RegistrationToken.Length -ge 20) {
+    Write-Host "DEBUG: Token Length: $($RegistrationToken.Length)"
+    Write-Host "DEBUG: Token Start:  $($RegistrationToken.Substring(0, 10))..."
+    Write-Host "DEBUG: Token End:    ...$($RegistrationToken.Substring($RegistrationToken.Length - 10))"
+}
+else {
+    Write-Host "DEBUG: CRITICAL - Token is NULL or too short! Value: '$RegistrationToken'"
+}
 
 try {
     Write-Host "Starting AVD Session Host Configuration..." -ForegroundColor Cyan
@@ -117,7 +123,7 @@ try {
     Start-Service -Name "RDAgentBootLoader"
     
     # Wait and check if RDAgent came up, otherwise start it too
-    Start-Sleep -Seconds 10
+    Start-Sleep -Seconds 30
     $rdAgent = Get-Service -Name "RDAgent" -ErrorAction SilentlyContinue
     if ($rdAgent.Status -ne 'Running') {
         Write-Host "Starting RDAgent manually..."
@@ -133,7 +139,7 @@ try {
     # -------------------------------------------------------------------------
     Write-Host "Verifying registration status..." -ForegroundColor Cyan
     
-    $maxRetries = 60 # 20 * 10s = approx 3.5 minutes timeout
+    $maxRetries = 20 # 20 * 10s = approx 3.5 minutes timeout
     $retryCount = 0
     $isRegistered = 0
 
