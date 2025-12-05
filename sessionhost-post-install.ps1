@@ -153,14 +153,14 @@ try {
         # Fetch Service Status for Debugging
         $blStatus = (Get-Service "RDAgentBootLoader").Status
         $agStatus = (Get-Service "RDAgent").Status
-        
+
+        Write-Host "Debug Info: BootLoader is $blStatus, Agent is $agStatus."
         Write-Error "❌ TIMEOUT: Agent did not register within time limit."
-        Write-Error "Debug Info: BootLoader is $blStatus, Agent is $agStatus."
         throw "Registration Timeout. Token might be invalid or Broker unreachable."
     }
 
 }
 catch {
     Write-Error "CRITICAL ERROR in Post-Install Script: $($_.Exception.Message)"
-    exit  # soft-fail
+    exit 1
 }
