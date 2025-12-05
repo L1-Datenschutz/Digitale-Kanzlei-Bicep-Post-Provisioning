@@ -26,6 +26,9 @@ param(
 # Set error preference to Stop to catch all errors immediately
 $ErrorActionPreference = "Stop"
 
+Write-Host "Let OS settle for 30 seconds..."
+Start-Sleep -Seconds 30
+
 try {
     Write-Host "Starting AVD Session Host Configuration..." -ForegroundColor Cyan
 
@@ -92,7 +95,7 @@ try {
     Stop-Service -Name "RDAgent" -Force -ErrorAction SilentlyContinue
     
     # Wait to ensure processes are terminated
-    Start-Sleep -Seconds 5
+    Start-Sleep -Seconds 30
 
     # B. INJECT TOKEN (Redundant for fresh install, required for Marketplace)
     Write-Host "Injecting/Verifying Registration Token in Registry..."
@@ -130,7 +133,7 @@ try {
     # -------------------------------------------------------------------------
     Write-Host "Verifying registration status..." -ForegroundColor Cyan
     
-    $maxRetries = 20 # 20 * 10s = approx 3.5 minutes timeout
+    $maxRetries = 60 # 20 * 10s = approx 3.5 minutes timeout
     $retryCount = 0
     $isRegistered = 0
 
@@ -167,7 +170,6 @@ try {
         Write-Host "❌ TIMEOUT: Agent did not register within time limit."
         Write-Host "❌ Registration Timeout. Token might be invalid or Broker unreachable."
     }
-    exit 0
 }
 catch {
     Write-Error "❌ CRITICAL ERROR in Post-Install Script: $($_.Exception.Message)"
