@@ -40,7 +40,7 @@ function Register-ExistingAgent {
     # 1. Stop Service explicitly to ensure it picks up the new token on start
     Write-Host "Stopping RDAgentBootLoader..."
     Stop-Service "RDAgentBootLoader" -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 60
+    Start-Sleep -Seconds 30
 
     # 2. Inject Token
     New-ItemProperty -Path $regPath -Name "RegistrationToken" -Value $Token -PropertyType String -Force | Out-Null
@@ -54,7 +54,7 @@ try {
     Write-Host "--- Starting AVD Host Setup ---"
     
     # Initial sleep to let OS settle
-    Start-Sleep -Seconds 600
+    Start-Sleep -Seconds 30
 
     if (Get-Service "RDAgentBootLoader" -ErrorAction SilentlyContinue) {
         Register-ExistingAgent -Token $RegistrationToken
