@@ -142,7 +142,9 @@ try {
             break
         }
         
-        Write-Host "[INFO] Waiting for services to be ready... Attempt $($serviceCheckRetries + 1)/$maxServiceRetries (BL: $($blService.Status ? 'N/A'), Agent: $($agService.Status ? 'N/A'))"
+        $blStatus = if ($blService) { $blService.Status } else { 'N/A' }
+        $agStatus = if ($agService) { $agService.Status } else { 'N/A' }
+        Write-Host "[INFO] Waiting for services to be ready... Attempt $($serviceCheckRetries + 1)/$maxServiceRetries (BL: $blStatus, Agent: $agStatus)"
         Start-Sleep -Seconds 10
         $serviceCheckRetries++
     }
