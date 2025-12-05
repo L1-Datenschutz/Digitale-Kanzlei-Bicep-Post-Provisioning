@@ -131,7 +131,7 @@ try {
     
     Write-Host "[INFO] Checking service health before verification..." -ForegroundColor Cyan
     $serviceCheckRetries = 0
-    $maxServiceRetries = 10  # 10 retries * 3 seconds = 30 seconds
+    $maxServiceRetries = 60  # 60 retries * 10 seconds = 10 minutes
     
     while ($serviceCheckRetries -lt $maxServiceRetries) {
         $blService = Get-Service -Name "RDAgentBootLoader" -ErrorAction SilentlyContinue
@@ -142,8 +142,8 @@ try {
             break
         }
         
-        Write-Host "[INFO] Waiting for services to be ready... Attempt $($serviceCheckRetries + 1)/$maxServiceRetries (BL: $($blService.Status ?? 'N/A'), Agent: $($agService.Status ?? 'N/A'))"
-        Start-Sleep -Seconds 3
+        Write-Host "[INFO] Waiting for services to be ready... Attempt $($serviceCheckRetries + 1)/$maxServiceRetries (BL: $($blService.Status ? 'N/A'), Agent: $($agService.Status ? 'N/A'))"
+        Start-Sleep -Seconds 10
         $serviceCheckRetries++
     }
     
@@ -187,33 +187,6 @@ try {
         Write-Host "[DEBUG] Token present in registry (First 5 chars: $($regCheck.RegistrationToken.Substring(0,5))...)"
     } else {
         Write-Host "[DEBUG] Token MISSING from registry!"
-    }
-
-    # Collect Event Viewer diagnostics
-    Write-Host "[DEBUG] Collecting RDAgent Event Log entries..." -ForegroundColor Yellow
-    $eventLogs = Get-EventLog -LogName System -Source "RDAgent*" -Newest 20 -ErrorAction SilentlyContinue | 
-        Select-Object -Property TimeGenerated, EntryType, Message
-    
-    if ($eventLogs) {
-        Write-Host "[DEBUG] Recent RDAgent events:"
-        foreach ($event in $eventLogs) {
-            Write-Host "[DEBUG]   $($event.TimeGenerated) [$($event.EntryType)] $($event.Message)"
-        }
-    } else {
-        Write-Host "[DEBUG] No RDAgent events found in System log."
-    }
-    
-    # Check Application log for agent errors
-    $appLogs = Get-EventLog -LogName Application -ErrorAction SilentlyContinue | 
-        Where-Object { $_.Source -like "*RD*" -or $_.Message -like "*RDAgent*" } | 
-        Sort-Object -Property TimeGenerated -Descending | 
-        Select-Object -First 10 -Property TimeGenerated, EntryType, Source, Message
-    
-    if ($appLogs) {
-        Write-Host "[DEBUG] Recent Application log entries related to RDAgent:"
-        foreach ($event in $appLogs) {
-            Write-Host "[DEBUG]   $($event.TimeGenerated) [$($event.EntryType)] $($event.Source): $($event.Message)"
-        }
     }
 
     Write-Error "[CRITICAL ERROR] TIMEOUT: Agent did not register."
