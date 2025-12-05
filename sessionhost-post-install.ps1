@@ -88,23 +88,28 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # 3. HARD RESET & TOKEN INJECTION (Safety Net & Marketplace Fix)
-    #    Crucial Step: Stop Services -> Write Token -> Start Services
-    #    We do this ALWAYS. If installed fresh, it confirms the token. 
-    #    If marketplace, it applies the token.
+    # 3. HARD RESET & TOKEN INJECTION (Brutal Mode)
     # -------------------------------------------------------------------------
-    Write-Host "Preparing for Service Reset & Token Verification..." -ForegroundColor Cyan
+    Write-Host "Preparing for Token Injection..." -ForegroundColor Cyan
     
-    # A. STOP SERVICES explicitly to release file/registry locks
-    Write-Host "Stopping AVD Agent services..." -ForegroundColor Yellow
+    # A. KILL SERVICES (Stop-Service is too gentle for hung agents)
+    Write-Host "Force-Killing AVD Agent processes..." -ForegroundColor Yellow
+    
+    # Wir suchen die Prozesse und töten sie hart
+    $processes = Get-Process -Name "RDAgentBootLoader", "RDAgent" -ErrorAction SilentlyContinue
+    if ($processes) {
+        $processes | Stop-Process -Force -ErrorAction SilentlyContinue
+        Write-Host "Processes terminated."
+    }
+    
+    # Sicherstellen, dass die Dienste auch logisch als "Stopped" gelten
     Stop-Service -Name "RDAgentBootLoader" -Force -ErrorAction SilentlyContinue
     Stop-Service -Name "RDAgent" -Force -ErrorAction SilentlyContinue
     
-    # Wait to ensure processes are terminated
-    Start-Sleep -Seconds 30
+    Start-Sleep -Seconds 5
 
-    # B. INJECT TOKEN (Redundant for fresh install, required for Marketplace)
-    Write-Host "Injecting/Verifying Registration Token in Registry..."
+    # B. INJECT TOKEN
+    Write-Host "Injecting Registration Token into Registry..."
     $registryPath = "HKLM:\SOFTWARE\Microsoft\RDInfraAgent"
     
     if (!(Test-Path $registryPath)) { 
@@ -113,21 +118,30 @@ try {
 
     # Write Token
     New-ItemProperty -Path $registryPath -Name "RegistrationToken" -Value $RegistrationToken -PropertyType String -Force | Out-Null
-    # Reset 'IsRegistered' flag to ensure a fresh registration attempt
     New-ItemProperty -Path $registryPath -Name "IsRegistered" -Value 0 -PropertyType DWord -Force | Out-Null
 
-    # C. START SERVICES
+    # C. START SERVICES (Focus on BootLoader)
     Write-Host "Starting AVD Agent services..." -ForegroundColor Yellow
     
-    # Start BootLoader (this orchestrates the Agent)
+    # Der BootLoader ist der Chef. Wir starten ihn und lassen ihn den Agenten holen.
     Start-Service -Name "RDAgentBootLoader"
     
-    # Wait and check if RDAgent came up, otherwise start it too
-    Start-Sleep -Seconds 30
-    $rdAgent = Get-Service -Name "RDAgent" -ErrorAction SilentlyContinue
-    if ($rdAgent.Status -ne 'Running') {
-        Write-Host "Starting RDAgent manually..."
-        Start-Service -Name "RDAgent" -ErrorAction SilentlyContinue
+    Write-Host "Waiting 15 seconds for BootLoader to initialize..."
+    Start-Sleep -Seconds 15
+
+    # CRITICAL CHECK: Läuft der BootLoader noch?
+    $bl = Get-Service "RDAgentBootLoader"
+    if ($bl.Status -ne 'Running') {
+        Write-Host "⚠️ BootLoader died immediately! Attempting one retry..." -ForegroundColor Red
+        Start-Service -Name "RDAgentBootLoader"
+        Start-Sleep -Seconds 10
+    }
+
+    # Jetzt prüfen wir den Agent
+    $ag = Get-Service "RDAgent"
+    if ($ag.Status -ne 'Running') {
+        Write-Host "BootLoader didn't start Agent yet. Nudging Agent..."
+        Start-Service -Name "RDAgent"
     }
     
     # Allow time for Broker Negotiation
