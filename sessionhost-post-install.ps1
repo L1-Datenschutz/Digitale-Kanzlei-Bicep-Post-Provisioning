@@ -1,9 +1,10 @@
 <#
 .SYNOPSIS
     Installs and registers the AVD Agent.
-    DIFFERENTIATED LOGIC:
-    - Fresh Install: Installs with Token, does NOT restart services (prevents corruption).
-    - Existing Agent: Performs Atomic Reset to inject new token.
+    HYBRID STRATEGY:
+    1. Try fresh install via MSI.
+    2. Check if registration happened.
+    3. If not registered after 60s, FORCE inject token and restart service (Self-Healing).
 #>
 
 param(
@@ -26,23 +27,19 @@ if ($RegistrationToken -and $RegistrationToken.Length -ge 20) {
 try {
     Write-Host "Starting AVD Session Host Configuration..." -ForegroundColor Cyan
     $registryPath = "HKLM:\SOFTWARE\Microsoft\RDInfraAgent"
+    $needsHardReset = $false
 
     # -------------------------------------------------------------------------
-    # 1. CHECK: Fresh Install vs. Marketplace Image
+    # 1. INSTALLATION PHASE
     # -------------------------------------------------------------------------
     $agentService = Get-Service -Name "RDAgentBootLoader" -ErrorAction SilentlyContinue
-    $isFreshInstall = $false
-
+    
     if ($agentService) {
-        # --- SCENARIO: EXISTING AGENT (Marketplace) ---
-        Write-Host "⚠️ AVD Agent service found. Using 'Injection Mode'." -ForegroundColor Yellow
-        $isFreshInstall = $false
+        Write-Host "⚠️ AVD Agent service found. Flagging for Token Injection." -ForegroundColor Yellow
+        $needsHardReset = $true
     }
     else {
-        # --- SCENARIO: FRESH INSTALL ---
-        Write-Host "AVD Agent not found. Using 'Fresh Install Mode'." -ForegroundColor Cyan
-        $isFreshInstall = $true
-
+        Write-Host "AVD Agent not found. Starting fresh installation..." -ForegroundColor Cyan
         if (!(Test-Path "C:\AzureData")) { New-Item -Path "C:\AzureData" -ItemType Directory -Force | Out-Null }
 
         $AgentUrl = "https://query.prod.cms.rt.microsoft.com/cms/api/am/binary/RWrmXv"
@@ -51,9 +48,8 @@ try {
         (New-Object System.Net.WebClient).DownloadFile($AgentUrl, "C:\AzureData\AVDAgent.msi")
         (New-Object System.Net.WebClient).DownloadFile($BootUrl, "C:\AzureData\AVDBootloader.msi")
 
-        # Install Agent WITH TOKEN.
-        # CRITICAL: We rely on the MSI to start the service correctly. We do NOT restart it.
-        Write-Host "Installing AVD Agent (with Token)..."
+        # Try installing WITH Token first
+        Write-Host "Installing AVD Agent (attempting MSI token injection)..."
         $agentArgs = "/i `"C:\AzureData\AVDAgent.msi`" /quiet /norestart REGISTRATION_TOKEN=`"$RegistrationToken`""
         $p1 = Start-Process msiexec.exe -ArgumentList $agentArgs -Wait -PassThru
         if ($p1.ExitCode -ne 0 -and $p1.ExitCode -ne 3010) { throw "Agent install failed: $($p1.ExitCode)" }
@@ -62,18 +58,33 @@ try {
         $p2 = Start-Process msiexec.exe -ArgumentList "/i `"C:\AzureData\AVDBootloader.msi`" /quiet /norestart" -Wait -PassThru
         if ($p2.ExitCode -ne 0 -and $p2.ExitCode -ne 3010) { throw "Bootloader install failed: $($p2.ExitCode)" }
         
-        Write-Host "Fresh installation complete. Waiting for auto-start..."
-        Start-Sleep -Seconds 10
+        Write-Host "Fresh installation complete. Checking if Agent picks up the token..."
+        
+        # Give the service 60 seconds to register on its own
+        $earlyCheck = 0
+        while ($earlyCheck -lt 6) {
+            Start-Sleep -Seconds 10
+            $val = Get-ItemProperty -Path $registryPath -Name "IsRegistered" -ErrorAction SilentlyContinue
+            if ($val.IsRegistered -eq 1) {
+                Write-Host "✅ Immediate Success! Agent registered via MSI parameters." -ForegroundColor Green
+                exit 0 # We are done!
+            }
+            $earlyCheck++
+        }
+        
+        Write-Host "⚠️ Agent running but NOT registered. MSI Token injection likely failed." -ForegroundColor Yellow
+        Write-Host "Initiating Self-Healing (Hard Reset)..." -ForegroundColor Yellow
+        $needsHardReset = $true
     }
 
     # -------------------------------------------------------------------------
-    # 2. HARD RESET (ONLY FOR EXISTING AGENTS)
-    #    We skip this for fresh installs to avoid killing the initializing service.
+    # 2. SELF-HEALING / HARD RESET
+    #    Runs if:
+    #    a) Agent was already there (Marketplace)
+    #    b) Fresh install failed to register within 60s
     # -------------------------------------------------------------------------
-    if (-not $isFreshInstall) {
-        Write-Host "Performing Atomic Reset on existing Agent..." -ForegroundColor Cyan
-        
-        # A. DISABLE & KILL
+    if ($needsHardReset) {
+        # A. DISABLE & KILL (To prevent auto-restart interference)
         Set-Service -Name "RDAgentBootLoader" -StartupType Disabled -ErrorAction SilentlyContinue
         Set-Service -Name "RDAgent" -StartupType Disabled -ErrorAction SilentlyContinue
         
@@ -82,21 +93,30 @@ try {
         
         Start-Sleep -Seconds 5
 
-        # B. INJECT TOKEN
+        # B. FORCE INJECT TOKEN
         if (!(Test-Path $registryPath)) { New-Item -Path $registryPath -Force | Out-Null }
+        
+        # Always overwrite the token to be sure
         New-ItemProperty -Path $registryPath -Name "RegistrationToken" -Value $RegistrationToken -PropertyType String -Force | Out-Null
         New-ItemProperty -Path $registryPath -Name "IsRegistered" -Value 0 -PropertyType DWord -Force | Out-Null
 
         # C. RE-ENABLE & START
         Set-Service -Name "RDAgentBootLoader" -StartupType Automatic
         Set-Service -Name "RDAgent" -StartupType Automatic
+        
         Start-Service -Name "RDAgentBootLoader"
         
-        Write-Host "Restarted existing services."
+        Write-Host "Waiting 15 seconds for BootLoader restart..."
+        Start-Sleep -Seconds 15
+
+        # Nudge Agent if needed
+        if ((Get-Service "RDAgent").Status -ne 'Running') {
+            Start-Service -Name "RDAgent" -ErrorAction SilentlyContinue
+        }
     }
 
     # -------------------------------------------------------------------------
-    # 3. VERIFICATION LOOP (For BOTH Scenarios)
+    # 3. FINAL VERIFICATION
     # -------------------------------------------------------------------------
     Write-Host "Waiting 30 seconds for Broker negotiation..."
     Start-Sleep -Seconds 30
@@ -104,14 +124,13 @@ try {
     Write-Host "Verifying registration status..." -ForegroundColor Cyan
     $maxRetries = 20
     $retryCount = 0
-    $isRegistered = 0
-
+    
     while ($retryCount -lt $maxRetries) {
         try {
             $val = Get-ItemProperty -Path $registryPath -Name "IsRegistered" -ErrorAction SilentlyContinue
             if ($val -and $val.IsRegistered -eq 1) {
-                $isRegistered = 1
-                break
+                Write-Host "✅ SUCCESS: Session Host is registered." -ForegroundColor Green
+                exit 0
             }
              Write-Host "No registration yet. Attempt: $($retryCount + 1)/$maxRetries"
         }
@@ -120,35 +139,24 @@ try {
         $retryCount++
     }
 
-    if ($isRegistered -eq 1) {
-        Write-Host "✅ SUCCESS: Session Host is registered." -ForegroundColor Green
+    # FAIL STATE LOGGING
+    $bl = Get-Service "RDAgentBootLoader" -ErrorAction SilentlyContinue
+    $ag = Get-Service "RDAgent" -ErrorAction SilentlyContinue
+    
+    Write-Host "Debug Info: BootLoader=$($bl.Status), Agent=$($ag.Status)"
+    
+    # Check if Token is actually in registry
+    $regCheck = Get-ItemProperty -Path $registryPath -Name "RegistrationToken" -ErrorAction SilentlyContinue
+    if ($regCheck.RegistrationToken) {
+        Write-Host "Debug Info: Token IS present in registry (First 5 chars: $($regCheck.RegistrationToken.Substring(0,5))...)"
+    } else {
+        Write-Host "Debug Info: Token is MISSING from registry!"
     }
-    else {
-        # DEBUGGING INFO
-        $bl = Get-Service "RDAgentBootLoader" -ErrorAction SilentlyContinue
-        $ag = Get-Service "RDAgent" -ErrorAction SilentlyContinue
-        Write-Host "Debug Info: BootLoader=$($bl.Status), Agent=$($ag.Status)"
-        
-        # Emergency Jumpstart (Last Resort)
-        if ($bl.Status -ne 'Running') {
-             Write-Host "⚠️ Service not running. Attempting emergency start..."
-             Start-Service "RDAgentBootLoader"
-             Start-Sleep -Seconds 15
-        }
 
-        # Check again
-        $valFinal = Get-ItemProperty -Path $registryPath -Name "IsRegistered" -ErrorAction SilentlyContinue
-        if ($valFinal.IsRegistered -eq 1) {
-            Write-Host "✅ RECOVERY SUCCESS." -ForegroundColor Green
-        } else {
-            Write-Error "❌ TIMEOUT: Agent did not register."
-            exit 1
-        }
-    }
+    Write-Error "❌ TIMEOUT: Agent did not register."
+    exit 1
 }
 catch {
     Write-Error "❌ CRITICAL ERROR: $($_.Exception.Message)"
     exit 1
 }
-
-exit 0
