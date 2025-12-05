@@ -84,3 +84,5 @@ try {
 }
 catch {
     Write-Error "Setup failed: $_"
+    exit 1
+}
