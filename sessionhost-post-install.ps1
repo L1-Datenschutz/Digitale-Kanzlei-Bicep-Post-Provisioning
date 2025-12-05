@@ -37,6 +37,7 @@ try {
     if ($agentService) {
         Write-Host "⚠️ AVD Agent service found (Marketplace Image detected)." -ForegroundColor Yellow
         Write-Host "Skipping download and installation to prevent version conflicts." -ForegroundColor Yellow
+        # Logic continues to Step 3 to inject token into the existing agent
     }
     else {
         # ---------------------------------------------------------------------
@@ -58,9 +59,13 @@ try {
         (New-Object System.Net.WebClient).DownloadFile($AgentUrl, "C:\AzureData\AVDAgent.msi")
         (New-Object System.Net.WebClient).DownloadFile($BootUrl, "C:\AzureData\AVDBootloader.msi")
 
-        # Install Agent (Silent, No Restart)
-        Write-Host "Installing AVD Agent..."
-        $p1 = Start-Process msiexec.exe -ArgumentList "/i `"C:\AzureData\AVDAgent.msi`" /quiet /norestart" -Wait -PassThru
+        # Install Agent (Silent, No Restart, WITH TOKEN INJECTION)
+        Write-Host "Installing AVD Agent (injecting token directly)..."
+        
+        # CHANGE: Added REGISTRATION_TOKEN parameter to msiexec arguments
+        $agentArgs = "/i `"C:\AzureData\AVDAgent.msi`" /quiet /norestart REGISTRATION_TOKEN=`"$RegistrationToken`""
+        
+        $p1 = Start-Process msiexec.exe -ArgumentList $agentArgs -Wait -PassThru
         if ($p1.ExitCode -ne 0 -and $p1.ExitCode -ne 3010) { 
             throw "Agent install failed with ExitCode: $($p1.ExitCode)" 
         }
@@ -74,10 +79,12 @@ try {
     }
 
     # -------------------------------------------------------------------------
-    # 3. HARD RESET & TOKEN INJECTION
+    # 3. HARD RESET & TOKEN INJECTION (Safety Net & Marketplace Fix)
     #    Crucial Step: Stop Services -> Write Token -> Start Services
+    #    We do this ALWAYS. If installed fresh, it confirms the token. 
+    #    If marketplace, it applies the token.
     # -------------------------------------------------------------------------
-    Write-Host "Preparing for Token Injection..." -ForegroundColor Cyan
+    Write-Host "Preparing for Service Reset & Token Verification..." -ForegroundColor Cyan
     
     # A. STOP SERVICES explicitly to release file/registry locks
     Write-Host "Stopping AVD Agent services..." -ForegroundColor Yellow
@@ -87,8 +94,8 @@ try {
     # Wait to ensure processes are terminated
     Start-Sleep -Seconds 5
 
-    # B. INJECT TOKEN
-    Write-Host "Injecting Registration Token into Registry..."
+    # B. INJECT TOKEN (Redundant for fresh install, required for Marketplace)
+    Write-Host "Injecting/Verifying Registration Token in Registry..."
     $registryPath = "HKLM:\SOFTWARE\Microsoft\RDInfraAgent"
     
     if (!(Test-Path $registryPath)) { 
@@ -137,8 +144,7 @@ try {
                 break
             }
 
-            Write-Host "No registration detected yet. Curren Registry value: $($val.isRegistered)"
-            Write-Host $val
+            Write-Host "No registration detected yet. Current Registry value: $($val.isRegistered)"
         }
         catch {
             # Ignore read errors during loop
@@ -165,5 +171,5 @@ try {
 }
 catch {
     Write-Error "CRITICAL ERROR in Post-Install Script: $($_.Exception.Message)"
-    # exit 1 - soft fail 
+    # exit 1 - soft fail logic maintained as requested
 }
